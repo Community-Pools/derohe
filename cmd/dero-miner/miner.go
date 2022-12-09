@@ -16,40 +16,38 @@
 
 package main
 
-import "io"
-import "os"
-import "fmt"
-import "time"
-import "net/url"
-import "crypto/rand"
-import "crypto/tls"
-import "sync"
-import "runtime"
-import "math/big"
-import "path/filepath"
-import "encoding/hex"
-import "encoding/binary"
-import "os/signal"
-import "sync/atomic"
-import "strings"
-import "strconv"
+import (
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"math/big"
+	"net/url"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
-import "github.com/go-logr/logr"
-
-import "github.com/deroproject/derohe/config"
-import "github.com/deroproject/derohe/globals"
+	"github.com/chzyer/readline"
+	"github.com/deroproject/derohe/astrobwt/astrobwt_fast"
+	"github.com/deroproject/derohe/astrobwt/astrobwtv3"
+	"github.com/deroproject/derohe/block"
+	"github.com/deroproject/derohe/config"
+	"github.com/deroproject/derohe/globals"
+	"github.com/deroproject/derohe/rpc"
+	"github.com/docopt/docopt-go"
+	"github.com/go-logr/logr"
+	"github.com/gorilla/websocket"
+)
 
 //import "github.com/deroproject/derohe/cryptography/crypto"
-import "github.com/deroproject/derohe/block"
-import "github.com/deroproject/derohe/rpc"
-
-import "github.com/chzyer/readline"
-import "github.com/docopt/docopt-go"
-
-import "github.com/deroproject/derohe/astrobwt/astrobwt_fast"
-import "github.com/deroproject/derohe/astrobwt/astrobwtv3"
-
-import "github.com/gorilla/websocket"
 
 var mutex sync.RWMutex
 var job rpc.GetBlockTemplate_Result
@@ -59,6 +57,7 @@ var threads int
 var iterations int = 100
 var max_pow_size int = 819200 //astrobwt.MAX_LENGTH
 var wallet_address string
+var worker string
 var daemon_rpc_address string
 
 var counter uint64
@@ -147,7 +146,23 @@ func main() {
 	logger.V(0).Info("", "MODE", globals.Config.Name)
 
 	if globals.Arguments["--wallet-address"] != nil {
-		addr, err := globals.ParseValidateAddress(globals.Arguments["--wallet-address"].(string))
+
+		// check for worker suffix
+		var parseWorker []string
+		var address string
+
+		if strings.Contains(globals.Arguments["--wallet-address"].(string), ".") {
+			parseWorker = strings.Split(globals.Arguments["--wallet-address"].(string), ".")
+			worker = parseWorker[1]
+			if len(worker) > 32 {
+				worker = worker[:32]
+			}
+			address = parseWorker[0]
+		} else {
+			address = globals.Arguments["--wallet-address"].(string)
+		}
+
+		addr, err := globals.ParseValidateAddress(address)
 		if err != nil {
 			logger.Error(err, "Wallet address is invalid.")
 			return
@@ -202,6 +217,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	logger.Info(fmt.Sprintf("Worker name set to %s", worker))
 	logger.Info(fmt.Sprintf("System will mine to \"%s\" with %d threads. Good Luck!!", wallet_address, threads))
 
 	//threads_ptr := flag.Int("threads", runtime.NumCPU(), "No. Of threads")
@@ -403,7 +419,7 @@ func getwork(wallet_address string) {
 
 	for {
 
-		u := url.URL{Scheme: "wss", Host: daemon_rpc_address, Path: "/ws/" + wallet_address}
+		u := url.URL{Scheme: "wss", Host: daemon_rpc_address, Path: "/ws/" + wallet_address + "." + worker}
 		logger.Info("connecting to ", "url", u.String())
 
 		dialer := websocket.DefaultDialer
